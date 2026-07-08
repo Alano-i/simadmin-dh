@@ -9,6 +9,7 @@ INSTALL_DIR="${INSTALL_DIR:-/opt/simadmin}"
 SERVICE_NAME="${SERVICE_NAME:-simadmin}"
 VERSION="${VERSION:-latest}"
 BUILD_TARGET="${BUILD_TARGET:-x86_64-unknown-linux-gnu}"
+SIMADMIN_INSTALL_RUNTIME_DEPS="${SIMADMIN_INSTALL_RUNTIME_DEPS:-1}"
 SIMADMIN_INSTALL_BUILD_DEPS="${SIMADMIN_INSTALL_BUILD_DEPS:-1}"
 SIMADMIN_NODE_MAJOR="${SIMADMIN_NODE_MAJOR:-22}"
 SIMADMIN_PNPM_VERSION="${SIMADMIN_PNPM_VERSION:-11}"
@@ -65,6 +66,111 @@ truthy() {
     1|true|TRUE|yes|YES|y|Y|on|ON) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+apt_install_packages() {
+  packages="$1"
+  if [ -z "$packages" ]; then
+    return 0
+  fi
+
+  if ! command -v apt-get >/dev/null 2>&1; then
+    echo "warning: apt-get not found, cannot install missing packages: $packages" >&2
+    return 0
+  fi
+
+  echo "==> installing runtime dependencies:$packages"
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update
+  # shellcheck disable=SC2086
+  apt-get install -y $packages
+}
+
+append_package() {
+  package_list="$1"
+  package_name="$2"
+
+  case " $package_list " in
+    *" $package_name "*)
+      printf '%s\n' "$package_list"
+      ;;
+    *)
+      printf '%s %s\n' "$package_list" "$package_name"
+      ;;
+  esac
+}
+
+append_package_if_missing_cmd() {
+  package_list="$1"
+  command_name="$2"
+  package_name="$3"
+
+  if command -v "$command_name" >/dev/null 2>&1; then
+    printf '%s\n' "$package_list"
+  else
+    append_package "$package_list" "$package_name"
+  fi
+}
+
+append_package_if_missing_dpkg() {
+  package_list="$1"
+  package_name="$2"
+
+  if command -v dpkg-query >/dev/null 2>&1 && dpkg-query -W -f='${Status}' "$package_name" 2>/dev/null | grep -q "install ok installed"; then
+    printf '%s\n' "$package_list"
+  else
+    append_package "$package_list" "$package_name"
+  fi
+}
+
+systemd_unit_exists() {
+  systemctl list-unit-files "$1" >/dev/null 2>&1
+}
+
+enable_systemd_unit_if_present() {
+  unit_name="$1"
+
+  if ! systemd_unit_exists "$unit_name"; then
+    return 0
+  fi
+
+  systemctl enable "$unit_name" >/dev/null 2>&1 || true
+  systemctl start "$unit_name" >/dev/null 2>&1 || true
+}
+
+ensure_runtime_deps() {
+  if ! truthy "$SIMADMIN_INSTALL_RUNTIME_DEPS"; then
+    echo "==> skipping runtime dependency install (SIMADMIN_INSTALL_RUNTIME_DEPS=${SIMADMIN_INSTALL_RUNTIME_DEPS})"
+    return 0
+  fi
+
+  if ! command -v apt-get >/dev/null 2>&1; then
+    echo "warning: apt-get not found, skipping automatic runtime dependency install" >&2
+    return 0
+  fi
+
+  packages=""
+  packages="$(append_package_if_missing_dpkg "$packages" ca-certificates)"
+  packages="$(append_package_if_missing_dpkg "$packages" dbus)"
+  packages="$(append_package_if_missing_cmd "$packages" curl curl)"
+  packages="$(append_package_if_missing_cmd "$packages" tar tar)"
+  packages="$(append_package_if_missing_cmd "$packages" unzip unzip)"
+  packages="$(append_package_if_missing_cmd "$packages" python3 python3)"
+  packages="$(append_package_if_missing_cmd "$packages" ip iproute2)"
+  packages="$(append_package_if_missing_cmd "$packages" iptables iptables)"
+  packages="$(append_package_if_missing_cmd "$packages" ip6tables iptables)"
+  packages="$(append_package_if_missing_cmd "$packages" killall psmisc)"
+  packages="$(append_package_if_missing_cmd "$packages" udevadm udev)"
+  packages="$(append_package_if_missing_cmd "$packages" mmcli modemmanager)"
+  packages="$(append_package_if_missing_cmd "$packages" qmicli libqmi-utils)"
+  packages="$(append_package_if_missing_cmd "$packages" mbimcli libmbim-utils)"
+  packages="$(append_package_if_missing_cmd "$packages" nmcli network-manager)"
+
+  apt_install_packages "$packages"
+
+  enable_systemd_unit_if_present dbus.service
+  enable_systemd_unit_if_present ModemManager.service
+  enable_systemd_unit_if_present NetworkManager.service
 }
 
 download_with_proxies() {
@@ -976,6 +1082,8 @@ main() {
 
   tmp_dir="$(mktemp -d)"
   trap 'rm -rf "$tmp_dir"' EXIT INT TERM
+
+  ensure_runtime_deps
 
   archive_path="${tmp_dir}/simadmin.tar.gz"
 
