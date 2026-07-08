@@ -2,9 +2,9 @@
 
 set -eu
 
-REPO="${REPO:-3899/SimAdmin}"
+REPO="${REPO:-Alano-i/simadmin-dh}"
 SOURCE_DIR="${SOURCE_DIR:-$(CDPATH= cd "$(dirname "$0")" && pwd)}"
-INSTALL_MODE="${INSTALL_MODE:-local}"
+INSTALL_MODE="${INSTALL_MODE:-release}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/simadmin}"
 SERVICE_NAME="${SERVICE_NAME:-simadmin}"
 VERSION="${VERSION:-latest}"
@@ -20,7 +20,7 @@ SERVICE_URL="${SERVICE_URL:-${RAW_BASE}/main/scripts/simadmin.service}"
 MODEM_RECOVERY_SCRIPT_URL="${MODEM_RECOVERY_SCRIPT_URL:-${RAW_BASE}/main/scripts/simadmin-modem-recovery.sh}"
 MODEM_RECOVERY_SERVICE_URL="${MODEM_RECOVERY_SERVICE_URL:-${RAW_BASE}/main/scripts/simadmin-modem-recovery.service}"
 ASSET_URL="${ASSET_URL:-}"
-ASSET_NAME="${ASSET_NAME:-simadmin.tar.gz}"
+ASSET_NAME="${ASSET_NAME:-}"
 SIMADMIN_INSTALL_LPAC="${SIMADMIN_INSTALL_LPAC:-1}"
 LPAC_REPO="${LPAC_REPO:-estkme-group/lpac}"
 LPAC_RELEASE_BASE_URL="${LPAC_RELEASE_BASE_URL:-https://github.com/${LPAC_REPO}/releases/latest/download}"
@@ -125,7 +125,16 @@ version_to_tag() {
 
 asset_url_from_tag() {
   tag="$1"
-  printf 'https://github.com/%s/releases/download/%s/simadmin.tar.gz\n' "$REPO" "$tag"
+  version="${2:-${tag#v}}"
+  asset_name="${ASSET_NAME:-$(asset_name_for_version "$version")}"
+  printf 'https://github.com/%s/releases/download/%s/%s\n' "$REPO" "$tag" "$asset_name"
+}
+
+asset_name_for_version() {
+  version="$1"
+  version="${version#v}"
+  version="${version#V}"
+  printf 'simadmin_%s_%s.tar.gz\n' "$version" "$BUILD_TARGET"
 }
 
 repo_version() {
@@ -143,16 +152,23 @@ resolve_asset_url() {
   fi
 
   if [ "$VERSION" = "latest" ]; then
-    printf 'https://github.com/%s/releases/latest/download/%s\n' "$REPO" "$ASSET_NAME"
+    if [ -n "$ASSET_NAME" ]; then
+      asset_name="$ASSET_NAME"
+    elif version_text="$(repo_version)"; then
+      asset_name="$(asset_name_for_version "$version_text")"
+    else
+      asset_name="simadmin.tar.gz"
+    fi
+    printf 'https://github.com/%s/releases/latest/download/%s\n' "$REPO" "$asset_name"
   else
-    asset_url_from_tag "$(version_to_tag "$VERSION")"
+    asset_url_from_tag "$(version_to_tag "$VERSION")" "$VERSION"
   fi
 }
 
 fallback_asset_url() {
   if [ "$VERSION" = "latest" ] && [ -z "$ASSET_URL" ]; then
     if version_text="$(repo_version)"; then
-      asset_url_from_tag "$(version_to_tag "$version_text")"
+      asset_url_from_tag "$(version_to_tag "$version_text")" "$version_text"
       return 0
     fi
   fi
