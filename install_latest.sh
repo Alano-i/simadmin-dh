@@ -3,9 +3,16 @@
 set -eu
 
 REPO="${REPO:-3899/SimAdmin}"
+SOURCE_DIR="${SOURCE_DIR:-$(CDPATH= cd "$(dirname "$0")" && pwd)}"
+INSTALL_MODE="${INSTALL_MODE:-local}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/simadmin}"
 SERVICE_NAME="${SERVICE_NAME:-simadmin}"
 VERSION="${VERSION:-latest}"
+BUILD_TARGET="${BUILD_TARGET:-x86_64-unknown-linux-gnu}"
+SIMADMIN_INSTALL_BUILD_DEPS="${SIMADMIN_INSTALL_BUILD_DEPS:-1}"
+SIMADMIN_NODE_MAJOR="${SIMADMIN_NODE_MAJOR:-22}"
+SIMADMIN_PNPM_VERSION="${SIMADMIN_PNPM_VERSION:-11}"
+SIMADMIN_FORCE_FRONTEND_INSTALL="${SIMADMIN_FORCE_FRONTEND_INSTALL:-1}"
 GH_PROXY="${GH_PROXY:-https://gh-proxy.com/}"
 GH_PROXY_FALLBACKS="${GH_PROXY_FALLBACKS:-https://ghproxy.net/ https://githubproxy.cc/}"
 RAW_BASE="${RAW_BASE:-https://raw.githubusercontent.com/${REPO}}"
@@ -23,7 +30,7 @@ LPAC_COMPAT_MANIFEST_NAME="${LPAC_COMPAT_MANIFEST_NAME:-lpac.json}"
 LPAC_TARGET_ARCH="${LPAC_TARGET_ARCH:-}"
 LPAC_TARGET_VERSION="${LPAC_TARGET_VERSION:-}"
 LPAC_LATEST_RELEASE_API_URL="${LPAC_LATEST_RELEASE_API_URL:-https://api.github.com/repos/${LPAC_REPO}/releases/latest}"
-LPAC_ASSET_FLAVOR="${LPAC_ASSET_FLAVOR:-compat}"
+LPAC_ASSET_FLAVOR="${LPAC_ASSET_FLAVOR:-default}"
 LPAC_ASSET_NAME="${LPAC_ASSET_NAME:-}"
 LPAC_ASSET_URL="${LPAC_ASSET_URL:-}"
 
@@ -38,6 +45,18 @@ require_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
     echo "error: missing required command: $1" >&2
     exit 1
+  fi
+}
+
+prepend_cargo_path() {
+  if [ -n "${HOME:-}" ] && [ -d "${HOME}/.cargo/bin" ]; then
+    PATH="${HOME}/.cargo/bin:${PATH}"
+    export PATH
+  fi
+
+  if [ -f "${HOME:-}/.cargo/env" ]; then
+    # shellcheck disable=SC1091
+    . "${HOME}/.cargo/env"
   fi
 }
 
@@ -169,7 +188,17 @@ download_release_asset() {
 install_service_file() {
   service_dst="/etc/systemd/system/${SERVICE_NAME}.service"
   mkdir -p /etc/systemd/system
-  download_with_proxies "$SERVICE_URL" "$service_dst"
+
+  if [ "$INSTALL_MODE" = "local" ]; then
+    if [ ! -f "${SOURCE_DIR}/scripts/simadmin.service" ]; then
+      echo "error: local service file not found: ${SOURCE_DIR}/scripts/simadmin.service" >&2
+      exit 1
+    fi
+    install -m 0644 "${SOURCE_DIR}/scripts/simadmin.service" "$service_dst"
+  else
+    download_with_proxies "$SERVICE_URL" "$service_dst"
+  fi
+
   systemctl daemon-reload
   systemctl enable "${SERVICE_NAME}.service" >/dev/null
 }
@@ -179,9 +208,24 @@ install_modem_recovery_service() {
   service_dst="/etc/systemd/system/simadmin-modem-recovery.service"
 
   mkdir -p /usr/local/bin /etc/systemd/system
-  download_with_proxies "$MODEM_RECOVERY_SCRIPT_URL" "$script_dst"
-  chmod 0755 "$script_dst"
-  download_with_proxies "$MODEM_RECOVERY_SERVICE_URL" "$service_dst"
+
+  if [ "$INSTALL_MODE" = "local" ]; then
+    if [ ! -f "${SOURCE_DIR}/scripts/simadmin-modem-recovery.sh" ]; then
+      echo "error: local modem recovery script not found: ${SOURCE_DIR}/scripts/simadmin-modem-recovery.sh" >&2
+      exit 1
+    fi
+    if [ ! -f "${SOURCE_DIR}/scripts/simadmin-modem-recovery.service" ]; then
+      echo "error: local modem recovery service not found: ${SOURCE_DIR}/scripts/simadmin-modem-recovery.service" >&2
+      exit 1
+    fi
+    install -m 0755 "${SOURCE_DIR}/scripts/simadmin-modem-recovery.sh" "$script_dst"
+    install -m 0644 "${SOURCE_DIR}/scripts/simadmin-modem-recovery.service" "$service_dst"
+  else
+    download_with_proxies "$MODEM_RECOVERY_SCRIPT_URL" "$script_dst"
+    chmod 0755 "$script_dst"
+    download_with_proxies "$MODEM_RECOVERY_SERVICE_URL" "$service_dst"
+  fi
+
   systemctl daemon-reload
   systemctl enable simadmin-modem-recovery.service >/dev/null
 }
@@ -202,6 +246,176 @@ configure_networkmanager_modem_unmanaged() {
   if systemctl is-active --quiet NetworkManager.service; then
     systemctl restart NetworkManager.service || true
   fi
+}
+
+install_ubuntu_build_deps() {
+  if ! truthy "$SIMADMIN_INSTALL_BUILD_DEPS"; then
+    return 0
+  fi
+
+  if ! command -v apt-get >/dev/null 2>&1; then
+    echo "warning: apt-get not found, skipping automatic build dependency install" >&2
+    return 0
+  fi
+
+  echo "==> installing Ubuntu build dependencies"
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update
+  apt-get install -y \
+    bash \
+    build-essential \
+    ca-certificates \
+    coreutils \
+    curl \
+    git \
+    gnupg \
+    make \
+    pkg-config \
+    python3 \
+    tar \
+    unzip \
+    xz-utils
+}
+
+node_major_version() {
+  if ! command -v node >/dev/null 2>&1; then
+    return 1
+  fi
+
+  node -v 2>/dev/null | sed -nE 's/^v([0-9]+).*/\1/p' | head -n 1
+}
+
+install_nodesource_node() {
+  require_cmd curl
+  require_cmd bash
+
+  if ! command -v apt-get >/dev/null 2>&1; then
+    echo "error: node >= 20 is required, and automatic Node.js install needs apt-get" >&2
+    exit 1
+  fi
+
+  echo "==> installing Node.js ${SIMADMIN_NODE_MAJOR}.x"
+  nodesource_setup="${tmp_dir}/nodesource_setup.sh"
+  curl -fsSL "https://deb.nodesource.com/setup_${SIMADMIN_NODE_MAJOR}.x" -o "$nodesource_setup"
+  bash "$nodesource_setup"
+  apt-get install -y nodejs
+}
+
+ensure_node_toolchain() {
+  node_major="$(node_major_version || true)"
+  if [ -z "$node_major" ] || [ "$node_major" -lt 20 ]; then
+    install_nodesource_node
+  fi
+
+  if command -v corepack >/dev/null 2>&1; then
+    if corepack enable && corepack prepare "pnpm@${SIMADMIN_PNPM_VERSION}" --activate; then
+      :
+    else
+      echo "warning: corepack failed, falling back to npm global pnpm install" >&2
+    fi
+  fi
+
+  if ! command -v pnpm >/dev/null 2>&1; then
+    require_cmd npm
+    npm install -g "pnpm@${SIMADMIN_PNPM_VERSION}"
+  fi
+}
+
+ensure_rust_toolchain() {
+  prepend_cargo_path
+
+  if ! command -v cargo >/dev/null 2>&1; then
+    require_cmd curl
+    echo "==> installing Rust toolchain"
+    rustup_script="${tmp_dir}/rustup-init.sh"
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o "$rustup_script"
+    sh "$rustup_script" -y --profile minimal
+    prepend_cargo_path
+  fi
+
+  require_cmd cargo
+  if command -v rustup >/dev/null 2>&1; then
+    rustup target add "$BUILD_TARGET"
+  fi
+}
+
+local_source_version() {
+  if [ -f "${SOURCE_DIR}/VERSION" ]; then
+    tr -d '[:space:]' < "${SOURCE_DIR}/VERSION"
+  else
+    printf '%s\n' "1.1.5"
+  fi
+}
+
+local_make_package_target() {
+  case "$BUILD_TARGET" in
+    x86_64-unknown-linux-gnu)
+      printf '%s\n' "package-x86"
+      ;;
+    x86_64-unknown-linux-musl)
+      printf '%s\n' "package-x86-musl"
+      ;;
+    *)
+      echo "error: unsupported local BUILD_TARGET: $BUILD_TARGET" >&2
+      echo "       supported: x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl" >&2
+      exit 1
+      ;;
+  esac
+}
+
+local_package_path() {
+  printf '%s/release/simadmin_%s_%s.tar.gz\n' \
+    "$SOURCE_DIR" \
+    "$(local_source_version)" \
+    "$BUILD_TARGET"
+}
+
+build_local_release_asset() {
+  archive_path="$1"
+
+  if [ ! -f "${SOURCE_DIR}/Makefile" ]; then
+    echo "error: local Makefile not found: ${SOURCE_DIR}/Makefile" >&2
+    exit 1
+  fi
+  if [ ! -f "${SOURCE_DIR}/backend/Cargo.toml" ]; then
+    echo "error: local backend source not found: ${SOURCE_DIR}/backend/Cargo.toml" >&2
+    exit 1
+  fi
+  if [ ! -f "${SOURCE_DIR}/frontend/package.json" ]; then
+    echo "error: local frontend source not found: ${SOURCE_DIR}/frontend/package.json" >&2
+    exit 1
+  fi
+
+  case "$(uname -m)" in
+    x86_64|amd64)
+      ;;
+    *)
+      echo "warning: current machine is $(uname -m), but BUILD_TARGET=${BUILD_TARGET}" >&2
+      ;;
+  esac
+
+  install_ubuntu_build_deps
+  ensure_node_toolchain
+  ensure_rust_toolchain
+
+  make_target="$(local_make_package_target)"
+
+  echo "==> building local SimAdmin source (${BUILD_TARGET})"
+  (
+    cd "$SOURCE_DIR"
+    if truthy "$SIMADMIN_FORCE_FRONTEND_INSTALL"; then
+      make frontend-install
+    fi
+    make "$make_target"
+  )
+
+  package_path="$(local_package_path)"
+  if [ ! -f "$package_path" ]; then
+    echo "error: local build did not create package: $package_path" >&2
+    exit 1
+  fi
+
+  cp "$package_path" "$archive_path"
 }
 
 normalize_lpac_arch() {
@@ -741,27 +955,39 @@ install_lpac() {
 
 main() {
   require_root
-  require_cmd curl
   require_cmd systemctl
   require_cmd mktemp
 
   tmp_dir="$(mktemp -d)"
   trap 'rm -rf "$tmp_dir"' EXIT INT TERM
 
-  asset_url="$(resolve_asset_url)"
+  archive_path="${tmp_dir}/simadmin.tar.gz"
 
-  case "$asset_url" in
-    *.tar.gz)
+  case "$INSTALL_MODE" in
+    local)
       require_cmd tar
-      archive_path="${tmp_dir}/simadmin.tar.gz"
+      build_local_release_asset "$archive_path"
+      ;;
+    release)
+      require_cmd curl
+      asset_url="$(resolve_asset_url)"
+      case "$asset_url" in
+        *.tar.gz)
+          require_cmd tar
+          ;;
+        *)
+          echo "error: unsupported OTA asset format, expected .tar.gz: $asset_url" >&2
+          exit 1
+          ;;
+      esac
+      download_release_asset "$archive_path" "$asset_url"
       ;;
     *)
-      echo "error: unsupported OTA asset format, expected .tar.gz: $asset_url" >&2
+      echo "error: unsupported INSTALL_MODE: $INSTALL_MODE" >&2
+      echo "       supported: local, release" >&2
       exit 1
       ;;
   esac
-
-  download_release_asset "$archive_path" "$asset_url"
 
   echo "==> extracting package"
   mkdir -p "${tmp_dir}/pkg"
