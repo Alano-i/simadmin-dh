@@ -3,7 +3,6 @@ SHELL := /usr/bin/env bash
 
 TARGET_X86 ?= x86_64-unknown-linux-gnu
 TARGET_X86_MUSL ?= x86_64-unknown-linux-musl
-TARGET_X86_CC ?= $(shell command -v x86_64-linux-gnu-gcc 2>/dev/null || command -v x86_64-unknown-linux-gnu-gcc 2>/dev/null || printf 'x86_64-linux-gnu-gcc')
 
 VERSION := $(shell if [ -f VERSION ]; then tr -d '[:space:]' < VERSION; else printf '1.1.5'; fi)
 COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || printf 'unknown')
@@ -42,8 +41,7 @@ frontend-install: check-node
 
 backend-x86: check-cargo
 	@if command -v rustup >/dev/null 2>&1; then rustup target add "$(TARGET_X86)"; fi
-	@command -v "$(TARGET_X86_CC)" >/dev/null 2>&1 || { printf '%s\n' 'x86_64 Linux GNU cross compiler is required. Try: brew tap messense/macos-cross-toolchains && brew trust --formula messense/macos-cross-toolchains/x86_64-unknown-linux-gnu && brew install x86_64-unknown-linux-gnu'; exit 1; }
-	cd backend && CC_x86_64_unknown_linux_gnu="$(TARGET_X86_CC)" CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER="$(TARGET_X86_CC)" SQLITE3_STATIC=1 LIBSQLITE3_SYS_USE_PKG_CONFIG=0 cargo build --release --target "$(TARGET_X86)"
+	cd backend && SQLITE3_STATIC=1 LIBSQLITE3_SYS_USE_PKG_CONFIG=0 cargo build --release --target "$(TARGET_X86)"
 	@ls -lh "$(BACKEND_BIN_X86)"
 
 backend-x86-musl: check-cargo
