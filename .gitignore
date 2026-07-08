@@ -18,7 +18,7 @@ frontend/package-lock.json
 *.bin
 
 # Release 包
-release/
+# release/
 
 # 临时目录
 temp/
