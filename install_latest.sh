@@ -170,7 +170,6 @@ ensure_runtime_deps() {
   packages="$(append_package_if_missing_dpkg "$packages" libcurl4)"
   packages="$(append_package_if_missing_dpkg "$packages" libpcsclite1)"
   packages="$(append_package_if_missing_cmd "$packages" pcscd pcscd)"
-  packages="$(append_package_if_missing_cmd "$packages" pcsc_scan pcsc-tools)"
 
   apt_install_packages "$packages"
 
