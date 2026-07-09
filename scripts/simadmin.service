@@ -11,6 +11,7 @@ ExecStart=/opt/simadmin/simadmin
 Restart=always
 RestartSec=5
 Environment=DBUS_SYSTEM_BUS_ADDRESS=unix:path=/var/run/dbus/system_bus_socket
+EnvironmentFile=-/etc/default/simadmin
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=simadmin

@@ -7,6 +7,7 @@ SOURCE_DIR="${SOURCE_DIR:-$(CDPATH= cd "$(dirname "$0")" && pwd)}"
 INSTALL_MODE="${INSTALL_MODE:-release}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/simadmin}"
 SERVICE_NAME="${SERVICE_NAME:-simadmin}"
+SIMADMIN_ENV_FILE="${SIMADMIN_ENV_FILE:-/etc/default/simadmin}"
 VERSION="${VERSION:-latest}"
 BUILD_TARGET="${BUILD_TARGET:-x86_64-unknown-linux-gnu}"
 SIMADMIN_INSTALL_RUNTIME_DEPS="${SIMADMIN_INSTALL_RUNTIME_DEPS:-1}"
@@ -166,12 +167,18 @@ ensure_runtime_deps() {
   packages="$(append_package_if_missing_cmd "$packages" qmicli libqmi-utils)"
   packages="$(append_package_if_missing_cmd "$packages" mbimcli libmbim-utils)"
   packages="$(append_package_if_missing_cmd "$packages" nmcli network-manager)"
+  packages="$(append_package_if_missing_dpkg "$packages" libcurl4)"
+  packages="$(append_package_if_missing_dpkg "$packages" libpcsclite1)"
+  packages="$(append_package_if_missing_cmd "$packages" pcscd pcscd)"
+  packages="$(append_package_if_missing_cmd "$packages" pcsc_scan pcsc-tools)"
 
   apt_install_packages "$packages"
 
   enable_systemd_unit_if_present dbus.service
   enable_systemd_unit_if_present ModemManager.service
   enable_systemd_unit_if_present NetworkManager.service
+  enable_systemd_unit_if_present pcscd.socket
+  enable_systemd_unit_if_present pcscd.service
 }
 
 download_with_proxies() {
@@ -324,6 +331,38 @@ install_service_file() {
 
   systemctl daemon-reload
   systemctl enable "${SERVICE_NAME}.service" >/dev/null
+}
+
+install_environment_file() {
+  if [ -f "$SIMADMIN_ENV_FILE" ]; then
+    return 0
+  fi
+
+  echo "==> installing environment file to ${SIMADMIN_ENV_FILE}"
+  mkdir -p "$(dirname "$SIMADMIN_ENV_FILE")"
+  cat > "$SIMADMIN_ENV_FILE" <<'EOF'
+# Optional SimAdmin runtime overrides.
+#
+# lpac eSIM APDU backend examples:
+#   QMI modem control port:
+#     LPAC_APDU=qmi
+#     LPAC_APDU_QMI_DEVICE=/dev/cdc-wdm0
+#     LPAC_APDU_QMI_UIM_SLOT=1
+#
+#   AT modem port:
+#     LPAC_APDU=at
+#     LPAC_APDU_AT_DEVICE=/dev/ttyUSB2
+#
+#   PC/SC card reader:
+#     LPAC_APDU=pcsc
+#
+# If unset, SimAdmin defaults to:
+#   LPAC_APDU=qmi
+#   LPAC_APDU_QMI_DEVICE=/dev/wwan0qmi0
+#   LPAC_APDU_QMI_UIM_SLOT=1
+#   LPAC_HTTP=curl
+EOF
+  chmod 0644 "$SIMADMIN_ENV_FILE"
 }
 
 install_modem_recovery_service() {
@@ -1184,6 +1223,7 @@ main() {
   install_lpac
 
   echo "==> installing systemd unit"
+  install_environment_file
   install_service_file
   echo "==> installing modem recovery service"
   install_modem_recovery_service
