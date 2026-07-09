@@ -25,7 +25,7 @@ const OTA_SERVICE_NAME: &str = "simadmin.service";
 const NM_CONF_DIR: &str = "/etc/NetworkManager/conf.d";
 const NM_CONF_PATH: &str = "/etc/NetworkManager/conf.d/99-simadmin-unmanaged-modem.conf";
 const NM_UNMANAGED_WWAN_CONFIG: &str = "[keyfile]\nunmanaged-devices=interface-name:wwan*\n";
-const LATEST_RELEASE_API: &str = "https://api.github.com/repos/3899/SimAdmin/releases/latest";
+const LATEST_RELEASE_API: &str = "https://api.github.com/repos/Alano-i/simadmin-dh/releases/latest";
 const BEIJING_UTC_OFFSET_SECONDS: i32 = 8 * 60 * 60;
 const UPDATE_CHECK_HOURS: [u32; 2] = [9, 18];
 const OTA_HTTP_TIMEOUT_SECS: u64 = 30;
@@ -747,6 +747,14 @@ mod tests {
         assert!(compare_versions("v1.0.4", "1.0.3"));
         assert!(!compare_versions("v1.0.3", "1.0.3"));
         assert!(!compare_versions("v1.0.2", "1.0.3"));
+    }
+
+    #[test]
+    fn latest_release_api_points_to_project_repo() {
+        assert_eq!(
+            LATEST_RELEASE_API,
+            "https://api.github.com/repos/Alano-i/simadmin-dh/releases/latest"
+        );
     }
 
     #[test]
