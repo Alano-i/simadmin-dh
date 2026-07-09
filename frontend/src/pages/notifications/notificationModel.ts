@@ -332,7 +332,7 @@ export function defaultChannelConfig(type: NotificationChannelKey): Record<strin
     case 'pushplus':
       return { token: '', topic: '', template: 'txt', channel: '', option: '', callback_url: '' }
     case 'wecom_app':
-      return { corp_id: '', agent_id: '', secret: '', to_user: '@all', to_party: '', to_tag: '', safe: false }
+      return { api_base_url: 'https://qyapi.weixin.qq.com', corp_id: '', agent_id: '', secret: '', to_user: '@all', to_party: '', to_tag: '', safe: false }
     case 'wecom_robot':
       return { webhook_url: '', key: '' }
     case 'dingtalk_robot':

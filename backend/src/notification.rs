@@ -35,6 +35,7 @@ use zbus::Connection;
 
 const BEIJING_UTC_OFFSET_SECONDS: i32 = 8 * 60 * 60;
 const NOTIFICATION_TIME_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
+const DEFAULT_WECOM_API_BASE_URL: &str = "https://qyapi.weixin.qq.com";
 
 /// Notification sender for all configured notification channels.
 pub struct NotificationSender {
@@ -42,7 +43,7 @@ pub struct NotificationSender {
     config_manager: Arc<ConfigManager>,
     dbus_conn: Arc<Connection>,
     database: Arc<Database>,
-    wecom_token_cache: tokio::sync::Mutex<HashMap<(String, String), WecomTokenCacheEntry>>,
+    wecom_token_cache: tokio::sync::Mutex<HashMap<(String, String, String), WecomTokenCacheEntry>>,
 }
 
 struct WecomTokenCacheEntry {
@@ -1641,18 +1642,22 @@ impl NotificationSender {
     ) -> Result<String, String> {
         let corp_id = config.corp_id.trim();
         let secret = config.secret.trim();
+        let api_base_url = wecom_api_base_url(&config.api_base_url)?;
         let mut retried = false;
 
         loop {
-            let token = self.fetch_wecom_access_token(corp_id, secret).await?;
+            let token = self
+                .fetch_wecom_access_token(&api_base_url, corp_id, secret)
+                .await?;
             match self
-                .post_wecom_app_payload(token.as_str(), payload.clone())
+                .post_wecom_app_payload(&api_base_url, token.as_str(), payload.clone())
                 .await
             {
                 Ok(result) => return Ok(result),
                 Err(WecomMessageError::InvalidAccessToken(_)) if !retried => {
                     retried = true;
-                    self.invalidate_wecom_access_token(corp_id, secret).await;
+                    self.invalidate_wecom_access_token(&api_base_url, corp_id, secret)
+                        .await;
                     continue;
                 }
                 Err(WecomMessageError::InvalidAccessToken(err)) => return Err(err),
@@ -1663,12 +1668,13 @@ impl NotificationSender {
 
     async fn post_wecom_app_payload(
         &self,
+        api_base_url: &str,
         access_token: &str,
         payload: Value,
     ) -> Result<String, WecomMessageError> {
         let url = format!(
-            "https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token={}",
-            access_token
+            "{}/cgi-bin/message/send?access_token={}",
+            api_base_url, access_token
         );
         let response = self
             .client
@@ -1693,10 +1699,15 @@ impl NotificationSender {
 
     async fn fetch_wecom_access_token(
         &self,
+        api_base_url: &str,
         corp_id: &str,
         secret: &str,
     ) -> Result<String, String> {
-        let cache_key = (corp_id.to_string(), secret.to_string());
+        let cache_key = (
+            api_base_url.to_string(),
+            corp_id.to_string(),
+            secret.to_string(),
+        );
         let mut cache = self.wecom_token_cache.lock().await;
         if let Some(entry) = cache.get(&cache_key) {
             if Instant::now() < entry.refresh_at {
@@ -1704,7 +1715,9 @@ impl NotificationSender {
             }
         }
 
-        let parsed = self.request_wecom_access_token(corp_id, secret).await?;
+        let parsed = self
+            .request_wecom_access_token(api_base_url, corp_id, secret)
+            .await?;
         let expires_in = parsed.expires_in.unwrap_or(7200).max(1);
         let refresh_after = if expires_in > 600 {
             expires_in - 300
@@ -1723,13 +1736,18 @@ impl NotificationSender {
         Ok(token)
     }
 
-    async fn invalidate_wecom_access_token(&self, corp_id: &str, secret: &str) {
+    async fn invalidate_wecom_access_token(&self, api_base_url: &str, corp_id: &str, secret: &str) {
         let mut cache = self.wecom_token_cache.lock().await;
-        cache.remove(&(corp_id.to_string(), secret.to_string()));
+        cache.remove(&(
+            api_base_url.to_string(),
+            corp_id.to_string(),
+            secret.to_string(),
+        ));
     }
 
     async fn request_wecom_access_token(
         &self,
+        api_base_url: &str,
         corp_id: &str,
         secret: &str,
     ) -> Result<WecomTokenResponse, String> {
@@ -1746,7 +1764,8 @@ impl NotificationSender {
         }
 
         let url = format!(
-            "https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid={}&corpsecret={}",
+            "{}/cgi-bin/gettoken?corpid={}&corpsecret={}",
+            api_base_url,
             encode_query_value(corp_id),
             encode_query_value(secret)
         );
@@ -3167,6 +3186,19 @@ fn robot_webhook_url(webhook_url: &str, key: &str, prefix: &str) -> Result<Strin
     Ok(format!("{}{}", prefix, encode_path_segment(key)))
 }
 
+fn wecom_api_base_url(api_base_url: &str) -> Result<String, String> {
+    let value = api_base_url.trim();
+    let base_url = if value.is_empty() {
+        DEFAULT_WECOM_API_BASE_URL
+    } else {
+        value
+    };
+    if !(base_url.starts_with("https://") || base_url.starts_with("http://")) {
+        return Err("企业微信 API 服务器地址必须以 http:// 或 https:// 开头".to_string());
+    }
+    Ok(base_url.trim_end_matches('/').to_string())
+}
+
 fn split_csv(input: &str) -> Vec<String> {
     input
         .split(',')
@@ -3975,5 +4007,22 @@ mod tests {
         assert!(!is_wecom_access_token_error(
             r#"{"errcode":0,"errmsg":"ok"}"#
         ));
+    }
+
+    #[test]
+    fn normalizes_wecom_api_base_url() {
+        assert_eq!(
+            wecom_api_base_url("").unwrap(),
+            "https://qyapi.weixin.qq.com"
+        );
+        assert_eq!(
+            wecom_api_base_url("https://qywx.example.com/").unwrap(),
+            "https://qywx.example.com"
+        );
+        assert_eq!(
+            wecom_api_base_url("https://proxy.example.com/wecom/").unwrap(),
+            "https://proxy.example.com/wecom"
+        );
+        assert!(wecom_api_base_url("qywx.example.com").is_err());
     }
 }

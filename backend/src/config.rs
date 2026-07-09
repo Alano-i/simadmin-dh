@@ -115,6 +115,8 @@ pub struct PushPlusConfig {
 pub struct WecomAppConfig {
     #[serde(flatten)]
     pub common: MessageChannelConfig,
+    #[serde(default = "default_wecom_api_base_url")]
+    pub api_base_url: String,
     #[serde(default)]
     pub corp_id: String,
     #[serde(default)]
@@ -743,6 +745,10 @@ fn default_wecom_to_user() -> String {
     "@all".to_string()
 }
 
+fn default_wecom_api_base_url() -> String {
+    "https://qyapi.weixin.qq.com".to_string()
+}
+
 fn default_dingtalk_msg_key() -> String {
     "sampleText".to_string()
 }
@@ -832,6 +838,7 @@ impl Default for WecomAppConfig {
     fn default() -> Self {
         Self {
             common: MessageChannelConfig::default(),
+            api_base_url: default_wecom_api_base_url(),
             corp_id: String::new(),
             agent_id: String::new(),
             secret: String::new(),
@@ -1420,15 +1427,23 @@ pub struct AutomationTask {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "config", rename_all = "snake_case")]
 pub enum AutomationTrigger {
-    Fixed { weekdays: Vec<u8>, times: Vec<String> },
-    Interval { interval_value: u64, interval_unit: String },
+    Fixed {
+        weekdays: Vec<u8>,
+        times: Vec<String>,
+    },
+    Interval {
+        interval_value: u64,
+        interval_unit: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "config", rename_all = "snake_case")]
 pub enum AutomationAction {
     RestartBaseband,
-    RebootDevice { delay_seconds: u32 },
+    RebootDevice {
+        delay_seconds: u32,
+    },
     SendSms {
         phone_number: String,
         content: String,

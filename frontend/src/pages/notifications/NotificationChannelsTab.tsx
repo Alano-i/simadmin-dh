@@ -343,6 +343,7 @@ export default function NotificationChannelsTab({
       case 'wecom_app':
         return (
           <Box sx={fieldStackSx}>
+            {renderStringField(channel, 'api_base_url', 'API 服务器地址')}
             {renderStringField(channel, 'corp_id', 'CorpID')}
             {renderStringField(channel, 'agent_id', 'AgentID')}
             {renderStringField(channel, 'secret', 'Secret', { password: true })}
