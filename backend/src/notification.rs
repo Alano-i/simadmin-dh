@@ -1013,7 +1013,8 @@ impl NotificationSender {
             }
             NotificationChannel::WecomApp => {
                 let config = parse_instance_config::<WecomAppConfig>(channel)?;
-                self.send_wecom_app_text(&config, text.to_string()).await
+                self.send_wecom_app_message(&config, title.to_string(), text.to_string())
+                    .await
             }
             NotificationChannel::WecomRobot => {
                 let config = parse_instance_config::<WecomRobotConfig>(channel)?;
@@ -1554,8 +1555,10 @@ impl NotificationSender {
         if !should_send_sms(&config.common, force) {
             return Ok("企业微信应用消息 skipped".to_string());
         }
+        let event = NotificationEvent::Sms { message, context };
+        let title = event.render_title("");
         let text = render_sms_template(&config.common.sms_template, message, context, false);
-        self.send_wecom_app_text(config, text).await
+        self.send_wecom_app_message(config, title, text).await
     }
 
     async fn send_wecom_app_call(
@@ -1567,8 +1570,9 @@ impl NotificationSender {
         if !should_send_call(&config.common, force) {
             return Ok("企业微信应用消息 skipped".to_string());
         }
+        let title = "SimAdmin 来电通知".to_string();
         let text = render_call_template(&config.common.call_template, call, false);
-        self.send_wecom_app_text(config, text).await
+        self.send_wecom_app_message(config, title, text).await
     }
 
     async fn send_wecom_app_ddns(
@@ -1585,7 +1589,8 @@ impl NotificationSender {
             &NotificationTemplateContext::default(),
             false,
         );
-        self.send_wecom_app_text(config, text).await
+        self.send_wecom_app_message(config, "SimAdmin DDNS 通知".to_string(), text)
+            .await
     }
 
     async fn send_wecom_app_version_update(
@@ -1602,12 +1607,14 @@ impl NotificationSender {
             &NotificationTemplateContext::default(),
             false,
         );
-        self.send_wecom_app_text(config, text).await
+        self.send_wecom_app_message(config, "SimAdmin 版本更新".to_string(), text)
+            .await
     }
 
-    async fn send_wecom_app_text(
+    async fn send_wecom_app_message(
         &self,
         config: &WecomAppConfig,
+        title: String,
         text: String,
     ) -> Result<String, String> {
         if config.corp_id.trim().is_empty()
@@ -1622,15 +1629,7 @@ impl NotificationSender {
             .trim()
             .parse::<i64>()
             .map_err(|_| "企业微信 AgentID 必须为数字".to_string())?;
-        let payload = json!({
-            "touser": if config.to_user.trim().is_empty() { "@all" } else { config.to_user.trim() },
-            "toparty": config.to_party.trim(),
-            "totag": config.to_tag.trim(),
-            "msgtype": "text",
-            "agentid": agent_id,
-            "text": { "content": text },
-            "safe": if config.safe { 1 } else { 0 },
-        });
+        let payload = wecom_app_payload(config, agent_id, &title, &text)?;
 
         self.post_wecom_app_message(config, payload).await
     }
@@ -3186,6 +3185,72 @@ fn robot_webhook_url(webhook_url: &str, key: &str, prefix: &str) -> Result<Strin
     Ok(format!("{}{}", prefix, encode_path_segment(key)))
 }
 
+fn wecom_app_message_type(value: &str) -> &str {
+    match value.trim() {
+        "news" => "news",
+        _ => "text",
+    }
+}
+
+fn wecom_app_payload(
+    config: &WecomAppConfig,
+    agent_id: i64,
+    title: &str,
+    text: &str,
+) -> Result<Value, String> {
+    let mut payload = Map::new();
+    payload.insert(
+        "touser".to_string(),
+        json!(if config.to_user.trim().is_empty() {
+            "@all"
+        } else {
+            config.to_user.trim()
+        }),
+    );
+    payload.insert("toparty".to_string(), json!(config.to_party.trim()));
+    payload.insert("totag".to_string(), json!(config.to_tag.trim()));
+    payload.insert("agentid".to_string(), json!(agent_id));
+
+    match wecom_app_message_type(&config.message_type) {
+        "news" => {
+            let news_url = config.news_url.trim();
+            if news_url.is_empty() {
+                return Err("企业微信图文消息跳转地址未配置".to_string());
+            }
+            if !(news_url.starts_with("https://") || news_url.starts_with("http://")) {
+                return Err("企业微信图文消息跳转地址必须以 http:// 或 https:// 开头".to_string());
+            }
+            let title = if title.trim().is_empty() {
+                "SimAdmin 通知"
+            } else {
+                title.trim()
+            };
+            let mut article = Map::new();
+            article.insert("title".to_string(), json!(title));
+            article.insert("description".to_string(), json!(text.trim()));
+            article.insert("url".to_string(), json!(news_url));
+            insert_non_empty(&mut article, "picurl", &config.news_picurl);
+            let mut news = Map::new();
+            news.insert(
+                "articles".to_string(),
+                Value::Array(vec![Value::Object(article)]),
+            );
+            payload.insert("msgtype".to_string(), json!("news"));
+            payload.insert("news".to_string(), Value::Object(news));
+            payload.insert("enable_id_trans".to_string(), json!(0));
+            payload.insert("enable_duplicate_check".to_string(), json!(0));
+            payload.insert("duplicate_check_interval".to_string(), json!(1800));
+        }
+        _ => {
+            payload.insert("msgtype".to_string(), json!("text"));
+            payload.insert("text".to_string(), json!({ "content": text }));
+            payload.insert("safe".to_string(), json!(if config.safe { 1 } else { 0 }));
+        }
+    }
+
+    Ok(Value::Object(payload))
+}
+
 fn wecom_api_base_url(api_base_url: &str) -> Result<String, String> {
     let value = api_base_url.trim();
     let base_url = if value.is_empty() {
@@ -4024,5 +4089,41 @@ mod tests {
             "https://proxy.example.com/wecom"
         );
         assert!(wecom_api_base_url("qywx.example.com").is_err());
+    }
+
+    #[test]
+    fn builds_wecom_app_text_and_news_payloads() {
+        let mut config = WecomAppConfig {
+            to_user: "user1|user2".to_string(),
+            ..WecomAppConfig::default()
+        };
+
+        let text_payload = wecom_app_payload(&config, 10001, "短信标题", "短信正文").unwrap();
+        assert_eq!(text_payload["msgtype"], "text");
+        assert_eq!(text_payload["touser"], "user1|user2");
+        assert_eq!(text_payload["agentid"], 10001);
+        assert_eq!(text_payload["text"]["content"], "短信正文");
+
+        config.message_type = "news".to_string();
+        config.news_url = "https://example.com/sms/1".to_string();
+        config.news_picurl = "https://example.com/pic.png".to_string();
+        let news_payload = wecom_app_payload(&config, 10001, "短信标题", "短信正文").unwrap();
+        assert_eq!(news_payload["msgtype"], "news");
+        assert_eq!(news_payload["news"]["articles"][0]["title"], "短信标题");
+        assert_eq!(
+            news_payload["news"]["articles"][0]["description"],
+            "短信正文"
+        );
+        assert_eq!(
+            news_payload["news"]["articles"][0]["url"],
+            "https://example.com/sms/1"
+        );
+        assert_eq!(
+            news_payload["news"]["articles"][0]["picurl"],
+            "https://example.com/pic.png"
+        );
+
+        config.news_url.clear();
+        assert!(wecom_app_payload(&config, 10001, "短信标题", "短信正文").is_err());
     }
 }

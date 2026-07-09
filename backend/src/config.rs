@@ -117,6 +117,12 @@ pub struct WecomAppConfig {
     pub common: MessageChannelConfig,
     #[serde(default = "default_wecom_api_base_url")]
     pub api_base_url: String,
+    #[serde(default = "default_wecom_app_message_type")]
+    pub message_type: String,
+    #[serde(default)]
+    pub news_url: String,
+    #[serde(default)]
+    pub news_picurl: String,
     #[serde(default)]
     pub corp_id: String,
     #[serde(default)]
@@ -749,6 +755,10 @@ fn default_wecom_api_base_url() -> String {
     "https://qyapi.weixin.qq.com".to_string()
 }
 
+fn default_wecom_app_message_type() -> String {
+    "text".to_string()
+}
+
 fn default_dingtalk_msg_key() -> String {
     "sampleText".to_string()
 }
@@ -839,6 +849,9 @@ impl Default for WecomAppConfig {
         Self {
             common: MessageChannelConfig::default(),
             api_base_url: default_wecom_api_base_url(),
+            message_type: default_wecom_app_message_type(),
+            news_url: String::new(),
+            news_picurl: String::new(),
             corp_id: String::new(),
             agent_id: String::new(),
             secret: String::new(),

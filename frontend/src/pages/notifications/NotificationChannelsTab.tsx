@@ -344,6 +344,13 @@ export default function NotificationChannelsTab({
         return (
           <Box sx={fieldStackSx}>
             {renderStringField(channel, 'api_base_url', 'API 服务器地址')}
+            {renderStringField(channel, 'message_type', '消息类型', { select: ['text', 'news'] })}
+            {getString(channel.config, 'message_type') === 'news' && (
+              <>
+                {renderStringField(channel, 'news_url', '图文跳转地址')}
+                {renderStringField(channel, 'news_picurl', '图文图片 URL')}
+              </>
+            )}
             {renderStringField(channel, 'corp_id', 'CorpID')}
             {renderStringField(channel, 'agent_id', 'AgentID')}
             {renderStringField(channel, 'secret', 'Secret', { password: true })}
