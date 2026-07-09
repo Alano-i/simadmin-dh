@@ -159,6 +159,7 @@ ensure_runtime_deps() {
   packages="$(append_package_if_missing_cmd "$packages" ip iproute2)"
   packages="$(append_package_if_missing_cmd "$packages" iptables iptables)"
   packages="$(append_package_if_missing_cmd "$packages" ip6tables iptables)"
+  packages="$(append_package_if_missing_cmd "$packages" modprobe kmod)"
   packages="$(append_package_if_missing_cmd "$packages" killall psmisc)"
   packages="$(append_package_if_missing_cmd "$packages" udevadm udev)"
   packages="$(append_package_if_missing_cmd "$packages" mmcli modemmanager)"
@@ -367,6 +368,45 @@ configure_networkmanager_modem_unmanaged() {
 
   if systemctl is-active --quiet NetworkManager.service; then
     systemctl restart NetworkManager.service || true
+  fi
+}
+
+install_dji_baiwang_modem_rules() {
+  if ! command -v udevadm >/dev/null 2>&1; then
+    echo "warning: udevadm not found, skipping DJI/Baiwang modem udev rules" >&2
+    return 0
+  fi
+
+  echo "==> installing DJI/Baiwang modem udev rules"
+  mkdir -p /etc/udev/rules.d
+  rules_path="/etc/udev/rules.d/78-simadmin-dji-baiwang-modem.rules"
+  cat > "$rules_path" <<'EOF'
+# DJI/Baiwang first generation 4G module, USB ID 2ca3:4006.
+# It is EG25/EC25-like but does not use Quectel USB IDs, so bind option
+# and tell ModemManager which AT ports are useful.
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="2ca3", ATTR{idProduct}=="4006", RUN+="/sbin/modprobe option", RUN+="/bin/sh -c 'echo 2ca3 4006 > /sys/bus/usb-serial/drivers/option1/new_id 2>/dev/null || true'"
+ATTRS{idVendor}=="2ca3", ATTRS{idProduct}=="4006", ENV{ID_MM_DEVICE_PROCESS}="1"
+ATTRS{idVendor}=="2ca3", ATTRS{idProduct}=="4006", ENV{ID_USB_INTERFACE_NUM}=="00", ENV{ID_MM_PORT_IGNORE}="1"
+ATTRS{idVendor}=="2ca3", ATTRS{idProduct}=="4006", ENV{ID_USB_INTERFACE_NUM}=="01", ENV{ID_MM_PORT_IGNORE}="1"
+ATTRS{idVendor}=="2ca3", ATTRS{idProduct}=="4006", ENV{ID_USB_INTERFACE_NUM}=="02", SUBSYSTEM=="tty", ENV{ID_MM_PORT_TYPE_AT_PRIMARY}="1"
+ATTRS{idVendor}=="2ca3", ATTRS{idProduct}=="4006", ENV{ID_USB_INTERFACE_NUM}=="03", SUBSYSTEM=="tty", ENV{ID_MM_PORT_TYPE_AT_SECONDARY}="1"
+ATTRS{idVendor}=="2ca3", ATTRS{idProduct}=="4006", ENV{ID_USB_INTERFACE_NUM}=="04", ENV{ID_MM_PORT_IGNORE}="1"
+EOF
+
+  udevadm control --reload-rules || true
+
+  if command -v modprobe >/dev/null 2>&1; then
+    modprobe option || true
+  fi
+  if [ -w /sys/bus/usb-serial/drivers/option1/new_id ]; then
+    echo "2ca3 4006" > /sys/bus/usb-serial/drivers/option1/new_id 2>/dev/null || true
+  fi
+
+  udevadm trigger --subsystem-match=tty --action=change || true
+  udevadm settle || true
+
+  if systemctl is-active --quiet ModemManager.service; then
+    systemctl restart ModemManager.service || true
   fi
 }
 
@@ -1149,6 +1189,7 @@ main() {
   install_modem_recovery_service
 
   configure_networkmanager_modem_unmanaged
+  install_dji_baiwang_modem_rules
 
   echo "==> starting service"
   systemctl restart "${SERVICE_NAME}.service"
