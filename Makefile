@@ -79,7 +79,14 @@ package-x86: x86
 	chmod 755 "$$tmp/simadmin"; \
 	mkdir -p "$$tmp/www"; \
 	cp -R frontend/dist/. "$$tmp/www/"; \
-	printf '{\n  "version": "%s",\n  "commit": "%s",\n  "build_time": "%s",\n  "arch": "%s"\n}\n' "$(VERSION)" "$(COMMIT)" "$(BUILD_TIME)" "$(TARGET_X86)" > "$$tmp/meta.json"; \
+	if command -v md5sum >/dev/null 2>&1; then \
+		binary_md5="$$(md5sum "$$tmp/simadmin" | awk '{print $$1}')"; \
+		frontend_md5="$$(find "$$tmp/www" -type f -exec md5sum {} \; | awk '{print $$1}' | sort | md5sum | awk '{print $$1}')"; \
+	else \
+		binary_md5="$$(md5 -q "$$tmp/simadmin")"; \
+		frontend_md5="$$(find "$$tmp/www" -type f -exec md5 -q {} \; | sort | md5 -q)"; \
+	fi; \
+	printf '{\n  "version": "%s",\n  "commit": "%s",\n  "build_time": "%s",\n  "binary_md5": "%s",\n  "frontend_md5": "%s",\n  "arch": "%s"\n}\n' "$(VERSION)" "$(COMMIT)" "$(BUILD_TIME)" "$$binary_md5" "$$frontend_md5" "$(TARGET_X86)" > "$$tmp/meta.json"; \
 	if command -v xattr >/dev/null 2>&1; then xattr -cr "$$tmp"; fi; \
 	COPYFILE_DISABLE=1 tar -czf "$(PACKAGE_X86)" -C "$$tmp" meta.json simadmin www; \
 	ls -lh "$(PACKAGE_X86)"
@@ -92,7 +99,14 @@ package-x86-musl: x86-musl
 	chmod 755 "$$tmp/simadmin"; \
 	mkdir -p "$$tmp/www"; \
 	cp -R frontend/dist/. "$$tmp/www/"; \
-	printf '{\n  "version": "%s",\n  "commit": "%s",\n  "build_time": "%s",\n  "arch": "%s"\n}\n' "$(VERSION)" "$(COMMIT)" "$(BUILD_TIME)" "$(TARGET_X86_MUSL)" > "$$tmp/meta.json"; \
+	if command -v md5sum >/dev/null 2>&1; then \
+		binary_md5="$$(md5sum "$$tmp/simadmin" | awk '{print $$1}')"; \
+		frontend_md5="$$(find "$$tmp/www" -type f -exec md5sum {} \; | awk '{print $$1}' | sort | md5sum | awk '{print $$1}')"; \
+	else \
+		binary_md5="$$(md5 -q "$$tmp/simadmin")"; \
+		frontend_md5="$$(find "$$tmp/www" -type f -exec md5 -q {} \; | sort | md5 -q)"; \
+	fi; \
+	printf '{\n  "version": "%s",\n  "commit": "%s",\n  "build_time": "%s",\n  "binary_md5": "%s",\n  "frontend_md5": "%s",\n  "arch": "%s"\n}\n' "$(VERSION)" "$(COMMIT)" "$(BUILD_TIME)" "$$binary_md5" "$$frontend_md5" "$(TARGET_X86_MUSL)" > "$$tmp/meta.json"; \
 	if command -v xattr >/dev/null 2>&1; then xattr -cr "$$tmp"; fi; \
 	COPYFILE_DISABLE=1 tar -czf "$(PACKAGE_X86_MUSL)" -C "$$tmp" meta.json simadmin www; \
 	ls -lh "$(PACKAGE_X86_MUSL)"
@@ -105,7 +119,14 @@ package-arm64-musl: arm64-musl
 	chmod 755 "$$tmp/simadmin"; \
 	mkdir -p "$$tmp/www"; \
 	cp -R frontend/dist/. "$$tmp/www/"; \
-	printf '{\n  "version": "%s",\n  "commit": "%s",\n  "build_time": "%s",\n  "arch": "%s"\n}\n' "$(VERSION)" "$(COMMIT)" "$(BUILD_TIME)" "$(TARGET_ARM64_MUSL)" > "$$tmp/meta.json"; \
+	if command -v md5sum >/dev/null 2>&1; then \
+		binary_md5="$$(md5sum "$$tmp/simadmin" | awk '{print $$1}')"; \
+		frontend_md5="$$(find "$$tmp/www" -type f -exec md5sum {} \; | awk '{print $$1}' | sort | md5sum | awk '{print $$1}')"; \
+	else \
+		binary_md5="$$(md5 -q "$$tmp/simadmin")"; \
+		frontend_md5="$$(find "$$tmp/www" -type f -exec md5 -q {} \; | sort | md5 -q)"; \
+	fi; \
+	printf '{\n  "version": "%s",\n  "commit": "%s",\n  "build_time": "%s",\n  "binary_md5": "%s",\n  "frontend_md5": "%s",\n  "arch": "%s"\n}\n' "$(VERSION)" "$(COMMIT)" "$(BUILD_TIME)" "$$binary_md5" "$$frontend_md5" "$(TARGET_ARM64_MUSL)" > "$$tmp/meta.json"; \
 	if command -v xattr >/dev/null 2>&1; then xattr -cr "$$tmp"; fi; \
 	COPYFILE_DISABLE=1 tar -czf "$(PACKAGE_ARM64_MUSL)" -C "$$tmp" meta.json simadmin www; \
 	ls -lh "$(PACKAGE_ARM64_MUSL)"

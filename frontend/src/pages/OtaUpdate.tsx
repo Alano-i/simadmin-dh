@@ -115,16 +115,26 @@ function formatBytes(size?: number) {
   return `${mb.toFixed(1)} MB`
 }
 
-function getReleaseAsset(release: OtaLatestReleaseResponse) {
-  return release.assets?.find(asset => /\.(tar\.gz|tgz|zip)$/i.test(asset.name)) ?? release.assets?.[0]
+function isSupportedOtaAsset(assetName?: string) {
+  return /\.(tar\.gz|tgz|zip)$/i.test(assetName || '')
 }
 
 function inferArch(assetName?: string) {
-  if (!assetName) return '未知'
-  if (/aarch64|arm64/i.test(assetName)) return 'aarch64-unknown-linux-musl'
-  if (/x86_64|amd64/i.test(assetName)) return 'x86_64-unknown-linux-gnu'
-  if (/armv7|armhf/i.test(assetName)) return 'armv7-unknown-linux-musleabihf'
+  const lower = assetName?.toLowerCase() || ''
+  if (!lower) return '未知'
+  if (lower.includes('aarch64-unknown-linux-musl') || lower.includes('arm64-unknown-linux-musl') || ((lower.includes('aarch64') || lower.includes('arm64')) && lower.includes('musl'))) return 'aarch64-unknown-linux-musl'
+  if (lower.includes('x86_64-unknown-linux-musl') || lower.includes('amd64-unknown-linux-musl') || ((lower.includes('x86_64') || lower.includes('amd64')) && lower.includes('musl'))) return 'x86_64-unknown-linux-musl'
+  if (lower.includes('x86_64-unknown-linux-gnu') || lower.includes('amd64-unknown-linux-gnu') || ((lower.includes('x86_64') || lower.includes('amd64')) && lower.includes('gnu'))) return 'x86_64-unknown-linux-gnu'
   return '未知'
+}
+
+function getReleaseAsset(release: OtaLatestReleaseResponse, currentArch?: string) {
+  const assets = release.assets ?? []
+  if (currentArch) {
+    const match = assets.find(asset => isSupportedOtaAsset(asset.name) && inferArch(asset.name) === currentArch)
+    return match
+  }
+  return assets.find(asset => isSupportedOtaAsset(asset.name)) ?? assets[0]
 }
 
 function isMarkdownBlockStart(line: string) {
@@ -643,7 +653,7 @@ export default function OtaUpdate() {
     )
   }
 
-  const asset = latestRelease ? getReleaseAsset(latestRelease) : undefined
+  const asset = latestRelease ? getReleaseAsset(latestRelease, status?.current_arch) : undefined
   const pendingMeta = status?.pending_meta
   const hasPendingUpdate = Boolean(pendingMeta)
   const proxyPrefix = getProxyPrefix()

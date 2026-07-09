@@ -44,6 +44,42 @@ pub fn get_current_commit() -> String {
     option_env!("GIT_COMMIT").unwrap_or("unknown").to_string()
 }
 
+fn current_runtime_has_glibc() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        Command::new("getconf")
+            .arg("GNU_LIBC_VERSION")
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false)
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
+}
+
+fn ota_arch_for_machine(machine: &str, has_glibc: bool) -> Option<&'static str> {
+    match machine {
+        "x86_64" | "amd64" => {
+            if has_glibc {
+                Some("x86_64-unknown-linux-gnu")
+            } else {
+                Some("x86_64-unknown-linux-musl")
+            }
+        }
+        "aarch64" | "arm64" => Some("aarch64-unknown-linux-musl"),
+        _ => None,
+    }
+}
+
+pub fn current_ota_arch() -> String {
+    ota_arch_for_machine(std::env::consts::ARCH, current_runtime_has_glibc())
+        .unwrap_or("unknown")
+        .to_string()
+}
+
 /// 获取 OTA 更新状态
 pub fn get_ota_status() -> OtaStatusResponse {
     let pending_meta = read_pending_meta();
@@ -51,6 +87,7 @@ pub fn get_ota_status() -> OtaStatusResponse {
     OtaStatusResponse {
         current_version: CURRENT_VERSION.to_string(),
         current_commit: get_current_commit(),
+        current_arch: current_ota_arch(),
         pending_update: pending_meta.is_some(),
         pending_meta,
     }
@@ -146,11 +183,36 @@ pub fn is_supported_ota_asset(name: &str) -> bool {
     lower.ends_with(".tar.gz") || lower.ends_with(".tgz") || lower.ends_with(".zip")
 }
 
-pub fn supported_release_asset(release: &OtaLatestReleaseResponse) -> Option<&OtaReleaseAsset> {
-    release
-        .assets
-        .iter()
-        .find(|asset| is_supported_ota_asset(&asset.name))
+fn release_asset_arch(name: &str) -> Option<&'static str> {
+    let lower = name.to_ascii_lowercase();
+    if lower.contains("aarch64-unknown-linux-musl")
+        || lower.contains("arm64-unknown-linux-musl")
+        || ((lower.contains("aarch64") || lower.contains("arm64")) && lower.contains("musl"))
+    {
+        return Some("aarch64-unknown-linux-musl");
+    }
+    if lower.contains("x86_64-unknown-linux-musl")
+        || lower.contains("amd64-unknown-linux-musl")
+        || ((lower.contains("x86_64") || lower.contains("amd64")) && lower.contains("musl"))
+    {
+        return Some("x86_64-unknown-linux-musl");
+    }
+    if lower.contains("x86_64-unknown-linux-gnu")
+        || lower.contains("amd64-unknown-linux-gnu")
+        || ((lower.contains("x86_64") || lower.contains("amd64")) && lower.contains("gnu"))
+    {
+        return Some("x86_64-unknown-linux-gnu");
+    }
+    None
+}
+
+pub fn supported_release_asset<'a>(
+    release: &'a OtaLatestReleaseResponse,
+    target_arch: &str,
+) -> Option<&'a OtaReleaseAsset> {
+    release.assets.iter().find(|asset| {
+        is_supported_ota_asset(&asset.name) && release_asset_arch(&asset.name) == Some(target_arch)
+    })
 }
 
 pub async fn fetch_latest_github_release(
@@ -222,8 +284,10 @@ pub async fn check_and_notify_version_update(
         return Ok(());
     }
 
-    let asset = supported_release_asset(&release)
-        .ok_or_else(|| "No supported OTA asset found in latest release".to_string())?;
+    let target_arch = current_ota_arch();
+    let asset = supported_release_asset(&release, &target_arch).ok_or_else(|| {
+        format!("No supported OTA asset found for current platform: {target_arch}")
+    })?;
     let own_number = notification_sender.get_own_number().await;
     let current_time = chrono::Utc::now().to_rfc3339();
     let event = VersionUpdateEvent {
@@ -251,7 +315,6 @@ pub async fn check_and_notify_version_update(
 
     Ok(())
 }
-
 
 pub async fn download_ota_asset_bytes(
     client: &reqwest::Client,
@@ -312,7 +375,6 @@ pub async fn download_ota_asset_bytes(
         Err(last_error)
     }
 }
-
 
 /// 读取待安装的更新元数据
 fn read_pending_meta() -> Option<OtaMeta> {
@@ -439,8 +501,8 @@ fn validate_ota_package(meta: &OtaMeta) -> Result<OtaValidation, String> {
     // 前端目录存在即可（MD5 跨平台难以保持一致）
     let frontend_md5_match = true; // 跳过前端 MD5 验证
 
-    // 检查架构（只接受 musl）
-    let arch_match = meta.arch == "aarch64-unknown-linux-musl";
+    let expected_arch = current_ota_arch();
+    let arch_match = meta.arch == expected_arch;
 
     // 比较版本
     let is_newer = compare_versions(&meta.version, CURRENT_VERSION);
@@ -459,8 +521,8 @@ fn validate_ota_package(meta: &OtaMeta) -> Result<OtaValidation, String> {
         }
         if !arch_match {
             errors.push(format!(
-                "Arch mismatch: expected=aarch64-unknown-linux-musl, actual={}",
-                meta.arch
+                "Arch mismatch: expected={}, actual={}",
+                expected_arch, meta.arch
             ));
         }
         Some(errors.join("; "))
@@ -520,7 +582,6 @@ fn normalize_version(version: &str) -> String {
 fn beijing_offset() -> FixedOffset {
     FixedOffset::east_opt(BEIJING_UTC_OFFSET_SECONDS).expect("valid Beijing UTC offset")
 }
-
 
 /// 应用 OTA 更新
 pub fn apply_ota_update(restart_now: bool) -> Result<String, String> {
@@ -755,6 +816,62 @@ mod tests {
             LATEST_RELEASE_API,
             "https://api.github.com/repos/Alano-i/simadmin-dh/releases/latest"
         );
+    }
+
+    #[test]
+    fn detects_ota_arch_from_machine_and_libc() {
+        assert_eq!(
+            ota_arch_for_machine("x86_64", true),
+            Some("x86_64-unknown-linux-gnu")
+        );
+        assert_eq!(
+            ota_arch_for_machine("x86_64", false),
+            Some("x86_64-unknown-linux-musl")
+        );
+        assert_eq!(
+            ota_arch_for_machine("aarch64", true),
+            Some("aarch64-unknown-linux-musl")
+        );
+        assert_eq!(ota_arch_for_machine("mips", false), None);
+    }
+
+    #[test]
+    fn selects_release_asset_for_target_arch() {
+        let release = OtaLatestReleaseResponse {
+            assets: vec![
+                OtaReleaseAsset {
+                    name: "simadmin_1.1.10_aarch64-unknown-linux-musl.tar.gz".to_string(),
+                    size: 1,
+                    browser_download_url: "https://example.com/arm64".to_string(),
+                },
+                OtaReleaseAsset {
+                    name: "simadmin_1.1.10_x86_64-unknown-linux-gnu.tar.gz".to_string(),
+                    size: 1,
+                    browser_download_url: "https://example.com/x86-gnu".to_string(),
+                },
+                OtaReleaseAsset {
+                    name: "simadmin_1.1.10_x86_64-unknown-linux-musl.tar.gz".to_string(),
+                    size: 1,
+                    browser_download_url: "https://example.com/x86-musl".to_string(),
+                },
+            ],
+            ..OtaLatestReleaseResponse::default()
+        };
+
+        assert_eq!(
+            supported_release_asset(&release, "x86_64-unknown-linux-gnu").map(|asset| &asset.name),
+            Some(&"simadmin_1.1.10_x86_64-unknown-linux-gnu.tar.gz".to_string())
+        );
+        assert_eq!(
+            supported_release_asset(&release, "x86_64-unknown-linux-musl").map(|asset| &asset.name),
+            Some(&"simadmin_1.1.10_x86_64-unknown-linux-musl.tar.gz".to_string())
+        );
+        assert_eq!(
+            supported_release_asset(&release, "aarch64-unknown-linux-musl")
+                .map(|asset| &asset.name),
+            Some(&"simadmin_1.1.10_aarch64-unknown-linux-musl.tar.gz".to_string())
+        );
+        assert!(supported_release_asset(&release, "armv7-unknown-linux-musleabihf").is_none());
     }
 
     #[test]

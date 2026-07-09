@@ -3844,8 +3844,11 @@ pub async fn prepare_online_ota_handler(
         )
         .await?;
 
-        let asset = crate::ota::supported_release_asset(&release)
-            .ok_or_else(|| "No supported OTA asset found in latest release".to_string())?;
+        let target_arch = crate::ota::current_ota_arch();
+        let asset =
+            crate::ota::supported_release_asset(&release, &target_arch).ok_or_else(|| {
+                format!("No supported OTA asset found for current platform: {target_arch}")
+            })?;
 
         if asset.size > crate::ota::MAX_OTA_BYTES {
             return Err(format!(

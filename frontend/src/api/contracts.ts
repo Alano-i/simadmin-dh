@@ -910,6 +910,7 @@ export interface OtaValidation {
 export interface OtaStatusResponse {
   current_version: string
   current_commit: string
+  current_arch: string
   pending_update: boolean
   pending_meta?: OtaMeta
 }

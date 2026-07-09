@@ -971,6 +971,7 @@ pub struct OtaMeta {
 pub struct OtaStatusResponse {
     pub current_version: String,
     pub current_commit: String,
+    pub current_arch: String,
     pub pending_update: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pending_meta: Option<OtaMeta>,
