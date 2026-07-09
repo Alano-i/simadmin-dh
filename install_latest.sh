@@ -9,7 +9,7 @@ INSTALL_DIR="${INSTALL_DIR:-/opt/simadmin}"
 SERVICE_NAME="${SERVICE_NAME:-simadmin}"
 SIMADMIN_ENV_FILE="${SIMADMIN_ENV_FILE:-/etc/default/simadmin}"
 VERSION="${VERSION:-latest}"
-BUILD_TARGET="${BUILD_TARGET:-x86_64-unknown-linux-gnu}"
+BUILD_TARGET="${BUILD_TARGET:-auto}"
 SIMADMIN_INSTALL_RUNTIME_DEPS="${SIMADMIN_INSTALL_RUNTIME_DEPS:-1}"
 SIMADMIN_INSTALL_BUILD_DEPS="${SIMADMIN_INSTALL_BUILD_DEPS:-1}"
 SIMADMIN_NODE_MAJOR="${SIMADMIN_NODE_MAJOR:-22}"
@@ -67,6 +67,37 @@ truthy() {
     1|true|TRUE|yes|YES|y|Y|on|ON) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+detect_build_target() {
+  machine="$(uname -m 2>/dev/null || true)"
+  case "$machine" in
+    x86_64|amd64)
+      if getconf GNU_LIBC_VERSION >/dev/null 2>&1; then
+        printf '%s\n' "x86_64-unknown-linux-gnu"
+      else
+        printf '%s\n' "x86_64-unknown-linux-musl"
+      fi
+      ;;
+    aarch64|arm64)
+      printf '%s\n' "aarch64-unknown-linux-musl"
+      ;;
+    *)
+      echo "error: unsupported machine architecture for automatic package selection: ${machine:-unknown}" >&2
+      echo "       set BUILD_TARGET manually, for example x86_64-unknown-linux-gnu" >&2
+      exit 1
+      ;;
+  esac
+}
+
+init_build_target() {
+  case "$BUILD_TARGET" in
+    ""|auto|AUTO)
+      BUILD_TARGET="$(detect_build_target)"
+      ;;
+  esac
+  export BUILD_TARGET
+  echo "==> selected build target: ${BUILD_TARGET}"
 }
 
 apt_install_packages() {
@@ -555,9 +586,12 @@ local_make_package_target() {
     x86_64-unknown-linux-musl)
       printf '%s\n' "package-x86-musl"
       ;;
+    aarch64-unknown-linux-musl)
+      printf '%s\n' "package-arm64-musl"
+      ;;
     *)
       echo "error: unsupported local BUILD_TARGET: $BUILD_TARGET" >&2
-      echo "       supported: x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl" >&2
+      echo "       supported: x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl, aarch64-unknown-linux-musl" >&2
       exit 1
       ;;
   esac
@@ -1161,6 +1195,7 @@ main() {
   tmp_dir="$(mktemp -d)"
   trap 'rm -rf "$tmp_dir"' EXIT INT TERM
 
+  init_build_target
   ensure_runtime_deps
 
   archive_path="${tmp_dir}/simadmin.tar.gz"
