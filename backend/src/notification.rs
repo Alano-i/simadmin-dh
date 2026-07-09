@@ -3214,10 +3214,9 @@ fn wecom_app_payload(
     match wecom_app_message_type(&config.message_type) {
         "news" => {
             let news_url = config.news_url.trim();
-            if news_url.is_empty() {
-                return Err("企业微信图文消息跳转地址未配置".to_string());
-            }
-            if !(news_url.starts_with("https://") || news_url.starts_with("http://")) {
+            if !news_url.is_empty()
+                && !(news_url.starts_with("https://") || news_url.starts_with("http://"))
+            {
                 return Err("企业微信图文消息跳转地址必须以 http:// 或 https:// 开头".to_string());
             }
             let title = if title.trim().is_empty() {
@@ -3228,7 +3227,7 @@ fn wecom_app_payload(
             let mut article = Map::new();
             article.insert("title".to_string(), json!(title));
             article.insert("description".to_string(), json!(text.trim()));
-            article.insert("url".to_string(), json!(news_url));
+            insert_non_empty(&mut article, "url", news_url);
             insert_non_empty(&mut article, "picurl", &config.news_picurl);
             let mut news = Map::new();
             news.insert(
@@ -4124,6 +4123,10 @@ mod tests {
         );
 
         config.news_url.clear();
+        let news_without_url = wecom_app_payload(&config, 10001, "短信标题", "短信正文").unwrap();
+        assert!(news_without_url["news"]["articles"][0]["url"].is_null());
+
+        config.news_url = "example.com/sms/1".to_string();
         assert!(wecom_app_payload(&config, 10001, "短信标题", "短信正文").is_err());
     }
 }

@@ -114,7 +114,7 @@ export default function NotificationChannelsTab({
     channel: NotificationChannelInstance,
     key: string,
     label: string,
-    extra?: { password?: boolean; select?: string[]; multiline?: boolean },
+    extra?: { password?: boolean; select?: Array<string | { value: string; label: string }>; multiline?: boolean },
   ) => (
     <TextField
       key={key}
@@ -128,9 +128,11 @@ export default function NotificationChannelsTab({
       fullWidth
       sx={channelTextFieldSx}
     >
-      {extra?.select?.map((option) => (
-        <MenuItem key={option} value={option}>{option || '默认'}</MenuItem>
-      ))}
+      {extra?.select?.map((option) => {
+        const value = typeof option === 'string' ? option : option.value
+        const optionLabel = typeof option === 'string' ? option || '默认' : option.label
+        return <MenuItem key={value} value={value}>{optionLabel}</MenuItem>
+      })}
     </TextField>
   )
 
@@ -344,11 +346,11 @@ export default function NotificationChannelsTab({
         return (
           <Box sx={fieldStackSx}>
             {renderStringField(channel, 'api_base_url', 'API 服务器地址')}
-            {renderStringField(channel, 'message_type', '消息类型', { select: ['text', 'news'] })}
+            {renderStringField(channel, 'message_type', '消息类型', { select: [{ value: 'text', label: '纯文本' }, { value: 'news', label: '图文' }] })}
             {getString(channel.config, 'message_type') === 'news' && (
               <>
-                {renderStringField(channel, 'news_url', '图文跳转地址')}
-                {renderStringField(channel, 'news_picurl', '图文图片 URL')}
+                {renderStringField(channel, 'news_url', '跳转URL')}
+                {renderStringField(channel, 'news_picurl', '封面图URL')}
               </>
             )}
             {renderStringField(channel, 'corp_id', 'CorpID')}
